@@ -1,42 +1,42 @@
 /**
  * =================================================================
- * PROCESSEUR MIDI : SÉQUENCEUR ALÉATOIRE
+ * MIDI PROCESSOR: RANDOM SEQUENCER
  * =================================================================
- * Step Sequencer : Avancement random pas à pas en boucle avec repetitions possibles.
+ * Step Sequencer: Randomized step progression with possible repetitions.
  * =================================================================
- * * * FONCTIONNALITÉS :
- * - Mode : 100% Wet (Note originale muette)
- * - Folding Pitch : Entre 21 (La 0) et 108 (Do 7).
- * - Auto-Panic : Note 108 (C7), double-frappe < 250ms.
- * =================================================================.
- *** PARAMETRES :
- * - Inlet 1 : MIDI Live [Pitch, Velocity].
- * - Inlet 2 : Liste de pas (Séquence).
- * - Inlet 3 : Modulation Vélocité.
+ * * * FEATURES:
+ * - Mode: 100% Wet (Original note is muted).
+ * - Pitch Folding: Between 21 (A0) and 108 (C7).
+ * - Auto-Panic: Note 108 (C7), double-tap < 250ms.
+ * =================================================================
+ * *** PARAMETERS:
+ * - Inlet 1: MIDI Live [Pitch, Velocity].
+ * - Inlet 2: Step List (Sequence pool).
+ * - Inlet 3: Velocity Modulation.
  * =================================================================
  */
 
 inlets = 3;
 outlets = 1;
 
-// --- VARIABLES GLOBALES ---
+// --- GLOBAL VARIABLES ---
 var intervals = [0];    
 var velMod = 0;         
 var noteMemory = {};    
 var activeNoteCount = []; 
 
-// Variables pour la détection du Panic (Note 108 / C7)
+// Panic Detection Variables (Note 108 / C7)
 var lastPanicNoteTime = 0;
 var PANIC_NOTE = 108;
 
-// Initialisation du compteur pour les 128 notes MIDI
+// Initialize MIDI instance counters (0-127)
 for (var k = 0; k < 128; k++) {
     activeNoteCount[k] = 0;
 }
 
 /**
- * FONCTION DE REPLIEMENT (FOLDING)
- * Ajustée pour les bornes 21 (bas) et 108 (haut).
+ * PITCH FOLDING LOGIC
+ * Bound between 21 (low) and 108 (high).
  */
 function foldNote(value) {
     var min = 21;
@@ -54,7 +54,7 @@ function foldNote(value) {
 }
 
 /**
- * FONCTION PANIC
+ * PANIC FUNCTION: Mutes all notes and clears memory
  */
 function panic() {
     for (var i = 0; i <= 127; i++) {
@@ -62,11 +62,11 @@ function panic() {
         activeNoteCount[i] = 0;
     }
     noteMemory = {};
-    post("SEQ-RNDM PANIC");
+    post("SEQ-RNDM PANIC\n");
 }
 
 /**
- * GESTION DES ENTIERS
+ * HANDLE INTEGERS
  */
 function msg_int(v) {
     if (inlet == 2) velMod = v;
@@ -74,20 +74,22 @@ function msg_int(v) {
 }
 
 /**
- * GESTION DES MESSAGES LISTES
+ * HANDLE LIST MESSAGES
  */
 function list() {
+    // Update the interval pool
     if (inlet == 1) {
         intervals = Array.prototype.slice.call(arguments);
     }
     
+    // MIDI Live Input
     if (inlet == 0) {
         if (arguments.length >= 2) {
             var inputPitch = arguments[0];
             var inputVel = arguments[1];
 
             if (inputVel > 0) {
-                // --- DÉTECTION AUTO-PANIC ---
+                // --- AUTO-PANIC DETECTION ---
                 if (inputPitch === PANIC_NOTE) {
                     var currentTime = Date.now();
                     if (currentTime - lastPanicNoteTime < 250) {
@@ -97,15 +99,17 @@ function list() {
                     lastPanicNoteTime = currentTime;
                 }
 
-                // --- LOGIQUE NOTE ON ---
+                // --- RANDOM NOTE ON LOGIC ---
                 var randomIndex = Math.floor(Math.random() * intervals.length);
                 var chosenInterval = intervals[randomIndex];
                 
-                // Application du repliement entre 21 et 108
+                // Apply folding logic
                 var outputPitch = foldNote(inputPitch + chosenInterval);
                 
+                // Store output pitch for correct Note Off mapping
                 noteMemory[inputPitch] = outputPitch;
 
+                // Handle duplicates to prevent hung notes
                 if (activeNoteCount[outputPitch] === 0) {
                     var v = Math.max(1, Math.min(inputVel + velMod, 127));
                     outlet(0, outputPitch, v);
@@ -113,12 +117,13 @@ function list() {
                 activeNoteCount[outputPitch]++; 
 
             } else {
-                // --- LOGIQUE NOTE OFF ---
+                // --- NOTE OFF LOGIC ---
                 if (noteMemory[inputPitch] !== undefined) {
                     var outPitch = noteMemory[inputPitch];
                     
                     activeNoteCount[outPitch]--;
 
+                    // Only send Note Off if no other instances of this pitch are active
                     if (activeNoteCount[outPitch] <= 0) {
                         activeNoteCount[outPitch] = 0; 
                         outlet(0, outPitch, 0);

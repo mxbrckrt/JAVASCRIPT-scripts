@@ -1,29 +1,31 @@
 /**
  * =================================================================
- * PROCESSEUR MIDI : ARPÉGIATEUR COMPLEXE
- * =================================================================.
- * Arpegiateur complexe avec un modèle a rebonds, avancement pas à pas en boucle, delay, feedback et repartition de dynamique de delais dans le temps.
+ * MIDI PROCESSOR: COMPLEX ARPEGGIATOR
  * =================================================================
- * * * FONCTIONNALITÉS :
- * - Mode : 100% Wet (Note originale muette)
- * - Folding Pitch : Entre 21 (La 0) et 108 (Do 7).
- * - Auto-Panic : Note 108 (C7), double-frappe < 250ms.
- * =================================================================. 
- *** PARAMETRES :
- * - Inlet 1 : MIDI Live,Note & Vélocité. Déclenche le cycle de délai.
- * - Inlet 2 : liste d'intervalles appliquée a la note (appliquée avant le premier écho).
- * - Inlet 3 : Vel Modulation,Correction de gain sur la vélocité initiale.
- * - Inlet 4 : Delay Time,Temps d'attente. Sécurité matérielle fixée à 20ms minimum.
- * - Inlet 5 : Feedback,0% = 1 seule répétition. >0% = répétitions multiples.
- * - Outlet 2 : nombre de voies de polyphonies utilisées.
- * - Message [spread] : repartition des delais : -100 a 0 = ritardandos, 0 = delais inchangés, 0 a 100 = accelerandos.
+ * Complex arpeggiator featuring a bouncing model, step-by-step looping,
+ * delay, feedback, and dynamic time-distribution (spread).
+ * =================================================================
+ * * * FEATURES:
+ * - Mode: 100% Wet (Original note is muted)
+ * - Pitch Folding: Between 21 (A0) and 108 (C7).
+ * - Auto-Panic: Note 108 (C7), double-tap < 250ms.
+ * =================================================================
+ * *** PARAMETERS:
+ * - Inlet 1: MIDI Live (Note & Velocity). Triggers the delay cycle.
+ * - Inlet 2: Interval list applied to the note (applied before the first echo).
+ * - Inlet 3: Vel Modulation, gain correction on the initial velocity.
+ * - Inlet 4: Delay Time, waiting time. Hardware safety set to 20ms minimum.
+ * - Inlet 5: Feedback, 0% = 1 single repetition. >0% = multiple repetitions.
+ * - Outlet 2: Number of active polyphony voices.
+ * - Message [spread]: Delay distribution: -100 to 0 = ritardandos, 
+ * 0 = unchanged delays, 0 to 100 = accelerandos.
  * =================================================================
  */
 
 inlets = 5;
 outlets = 2;
 
-// --- PARAMÈTRES ---
+// --- PARAMETERS ---
 var intervalList = [0];   
 var velMod = 0;
 var delayTime = 100;      
@@ -32,13 +34,16 @@ var spreadValue = 0;
 var MAX_SEQUENCES = 16;   
 var MAX_POLYPHONY = 64;   
 
-// --- SYSTÈME ---
+// --- SYSTEM ---
 var activeSequences = []; 
 var noteMemory = {};
 var totalActiveVoices = 0; 
 var lastPanicNoteTime = 0;
 var PANIC_NOTE = 108;
 
+/**
+ * Pitch Folding Logic
+ */
 function foldNote(value) {
     var min = 21, max = 108;
     var current = value;
@@ -68,6 +73,9 @@ function list() {
     else if (inlet === 0) processMidi(arguments);
 }
 
+/**
+ * Panic Function: Clears all tasks and mutes all notes
+ */
 function panic() {
     activeSequences.forEach(function(s) { if(s.task) s.task.cancel(); });
     activeSequences = [];
@@ -76,17 +84,17 @@ function panic() {
     totalActiveVoices = 0;
     updateMonitor();
     
-    // Ajout du print dans la Max Window
+    // Print to Max Window
     post("ARPECHO PANIC\n");
 }
 
 /**
- * MOTEUR DE SÉQUENCE (CORRIGÉ)
+ * SEQUENCE ENGINE
  */
 function sequenceTick() {
     var self = arguments.callee.task.parent;
     
-    // Protection polyphonie
+    // Polyphony Protection
     if (totalActiveVoices >= MAX_POLYPHONY) {
         self.index++;
         arguments.callee.task.schedule(self.currentDelay);
@@ -102,10 +110,10 @@ function sequenceTick() {
     totalActiveVoices++;
     updateMonitor();
 
-    // Stockage pour le Note Off
+    // Storage for Note Off
     var pToOff = outP;
 
-    // Task de Note Off
+    // Note Off Task
     var offT = new Task(function() { 
         outlet(0, pToOff, 0); 
         totalActiveVoices = Math.max(0, totalActiveVoices - 1);
@@ -113,7 +121,7 @@ function sequenceTick() {
     });
     offT.schedule(self.currentDelay * 0.8);
 
-    // Évolution
+    // Evolution (Time and Velocity)
     self.index++;
     var stepChange = (delayTime * (spreadValue / 500));
     self.currentDelay = Math.max(20, Math.min(3000, self.currentDelay - stepChange));
@@ -122,6 +130,7 @@ function sequenceTick() {
         self.currentVel = Math.floor(self.currentVel * (feedback / 100));
     }
 
+    // Recursion: Re-schedule if velocity is audible
     if (self.currentVel > 2) {
         arguments.callee.task.schedule(self.currentDelay);
     } else {
@@ -139,20 +148,26 @@ function removeSequence(id) {
     }
 }
 
+/**
+ * MIDI Input Handling
+ */
 function processMidi(args) {
     var p = args[0], v = args[1];
     if (v > 0) {
+        // Auto-Panic Detection
         if (p === PANIC_NOTE) {
             var ct = Date.now();
             if (ct - lastPanicNoteTime < 250) { panic(); return; }
             lastPanicNoteTime = ct;
         }
 
+        // Sequence Stealing (Max 16 sequences)
         while (activeSequences.length >= MAX_SEQUENCES) {
             var old = activeSequences.shift();
             old.task.cancel();
         }
 
+        // Create new sequence object
         var newSeq = {
             id: Math.random(),
             originPitch: p,
@@ -166,7 +181,7 @@ function processMidi(args) {
         activeSequences.push(newSeq);
         newSeq.task.schedule(delayTime);
     } else {
-        // Note Off manuel : On envoie juste le 0 sur le pitch d'origine
+        // Manual Note Off: Mute the original pitch immediately
         outlet(0, p, 0); 
     }
 }

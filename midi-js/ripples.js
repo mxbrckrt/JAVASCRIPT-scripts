@@ -1,38 +1,41 @@
 /**
  * =================================================================
- * PROCESSEUR MIDI : RIPPLES (ONDES SYMÉTRIQUES)
+ * MIDI PROCESSOR: RIPPLES (SYMMETRICAL WAVES)
  * =================================================================
- * * * FONCTIONNALITÉS :
- * - Mode : 100% Wet.
- * - Concept : La note originale est le pivot. À chaque écho, deux notes
- * s'éloignent (l'une monte, l'autre descend) d'un demi-ton.
- * - Rebond : Utilise le Folding entre 21 (La 0) et 107 (Sib 6).
- * - Auto-Panic : Si la note 108 (C7) est jouée 2 fois en moins de 250ms.
- * - Cycle : Le déclenchement est consécutif au Note Off de l'originale.
+ * * * FEATURES:
+ * - Mode: 100% Wet.
+ * - Concept: The original note acts as a pivot. With each echo, two notes 
+ * expand outwards (one up, one down) by one semitone.
+ * - Rebound: Uses Pitch Folding between 21 (A0) and 107 (Bb6).
+ * - Auto-Panic: If note 108 (C7) is played twice in < 250ms.
+ * - Cycle: Triggering is consecutive to the original note's Note Off.
  * =================================================================
- *** PARAMETRES :
- * - Inlet 1 : MIDI Live (Note & Vel). Définit le pivot et la durée.
- * - Inlet 2 : Vel Modulation, Correction de gain initiale.
- * - Inlet 3 : Delay Time, Vitesse de propagation de l'onde (ms).
- * - Inlet 4 : Feedback, Persistance de l'onde (%).
+ *** PARAMETERS:
+ * - Inlet 1: MIDI Live (Note & Vel). Defines pivot and duration.
+ * - Inlet 2: Vel Modulation, initial gain correction.
+ * - Inlet 3: Delay Time, wave propagation speed (ms).
+ * - Inlet 4: Feedback, wave persistence/distance (%).
  * =================================================================
  */
 
 inlets = 4;
 outlets = 1;
 
-// --- PARAMÈTRES ---
+// --- PARAMETERS ---
 var velMod = 0;
 var delayTime = 100; 
 var feedback = 0;    
 
-// --- SYSTÈME ---
+// --- SYSTEM ---
 var startTime = {};   
 var noteMemory = {};  
 var activeTasks = []; 
 var lastPanicNoteTime = 0;
 var PANIC_NOTE = 108;
 
+/**
+ * Pitch Folding Logic
+ */
 function foldNote(value) {
     var min = 21, max = 107;
     var current = value;
@@ -43,6 +46,9 @@ function foldNote(value) {
     return Math.floor(current);
 }
 
+/**
+ * Panic Function: Clears all tasks and mutes all MIDI notes
+ */
 function panic() {
     activeTasks.forEach(function(t) { if(t) t.cancel(); });
     activeTasks = [];
@@ -61,18 +67,19 @@ function msg_int(v) {
 }
 
 /**
- * MOTEUR D'ONDE (RIPPLE)
+ * RIPPLE ENGINE
+ * pivot: center note, step: distance from pivot, v: velocity, d: duration
  */
 function runRipple(pivot, step, v, d) {
-    // Calcul de l'expansion symétrique
+    // Calculate symmetrical expansion
     var noteUp = foldNote(pivot + step);
     var noteDown = foldNote(pivot - step);
 
-    // Émission du couple de notes
+    // Emit note pair
     outlet(0, noteUp, v);
     outlet(0, noteDown, v);
 
-    // Note Off groupé après la durée mémorisée
+    // Grouped Note Off after the memorized duration (d)
     var offTask = new Task(function() {
         outlet(0, noteUp, 0);
         outlet(0, noteDown, 0);
@@ -80,12 +87,12 @@ function runRipple(pivot, step, v, d) {
     offTask.schedule(d);
     activeTasks.push(offTask);
 
-    // Calcul de la persistance (Feedback)
+    // Persistence calculation (Feedback)
     var nextVel = Math.floor(v * (feedback / 100));
 
     if (nextVel > 2) {
         var nextStepTask = new Task(function() {
-            // Expansion d'un demi-ton supplémentaire au prochain cycle
+            // Expand by one additional semitone in the next cycle
             runRipple(pivot, step + 1, nextVel, d);
         });
         nextStepTask.schedule(delayTime);
@@ -94,7 +101,7 @@ function runRipple(pivot, step, v, d) {
 }
 
 /**
- * RÉCEPTION MIDI
+ * MIDI INPUT HANDLING
  */
 function list() {
     if (inlet == 0) {
@@ -109,18 +116,19 @@ function list() {
                     if (ct - lastPanicNoteTime < 250) { panic(); return; }
                     lastPanicNoteTime = ct;
                 }
-                // Enregistrement du pivot
+                // Store pivot timing and initial velocity
                 startTime[p] = Date.now();
                 noteMemory[p] = Math.max(1, Math.min(v + velMod, 127));
 
             } else {
                 // --- NOTE OFF ---
                 if (startTime[p] !== undefined) {
+                    // Calculate press duration
                     var duration = Date.now() - startTime[p];
                     var initialVel = noteMemory[p];
 
                     if (delayTime >= 20) {
-                        // L'onde démarre après le Note Off, au premier palier (step 1)
+                        // Wave starts after Note Off, at the first step
                         var firstRippleTask = new Task(function() {
                             runRipple(p, 1, initialVel, duration);
                         });

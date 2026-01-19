@@ -1,42 +1,42 @@
 /**
  * =================================================================
- * PROCESSEUR MIDI : SÉQUENCEUR CYCLIQUE
+ * MIDI PROCESSOR: CYCLIC SEQUENCER
  * =================================================================.
- * Step Sequencer : Avancement pas à pas en boucle.
+ * Step Sequencer: Step-by-step looping progression.
  * =================================================================
- * * * FONCTIONNALITÉS :
- * - Mode : 100% Wet (Note originale muette)
- * - Folding Pitch : Entre 21 (La 0) et 108 (Do 7).
- * - Auto-Panic : Note 108 (C7), double-frappe < 250ms.
+ * * * FEATURES:
+ * - Mode: 100% Wet (Original note is muted).
+ * - Pitch Folding: Between 21 (A0) and 108 (C7).
+ * - Auto-Panic: Note 108 (C7), double-tap < 250ms.
  * =================================================================
- *** PARAMETRES :
- * - Inlet 1 : MIDI Live [Pitch, Velocity].
- * - Inlet 2 : Liste de pas (Séquence).
- * - Inlet 3 : Modulation Vélocité.
+ * *** PARAMETERS:
+ * - Inlet 1: MIDI Live [Pitch, Velocity].
+ * - Inlet 2: Step List (Sequence).
+ * - Inlet 3: Velocity Modulation.
  * =================================================================
  */
 
 inlets = 3;
 outlets = 1;
 
-// --- VARIABLES GLOBALES ---
+// --- GLOBAL VARIABLES ---
 var intervals = [0];
 var stepIndex = 0;
 var velMod = 0;
 var noteMemory = {};
 var activeNoteCount = [];
 
-// Variables pour la détection du Panic (Note 108 / C7)
+// Panic Detection Variables (Note 108 / C7)
 var lastPanicNoteTime = 0;
 var PANIC_NOTE = 108;
 
-// Initialisation des compteurs d'instances MIDI
+// Initialize MIDI instance counters
 for (var k = 0; k < 128; k++) {
     activeNoteCount[k] = 0;
 }
 
 /**
- * FONCTION DE REPLIEMENT (FOLDING)
+ * PITCH FOLDING LOGIC
  */
 function foldNote(value) {
     var min = 21;
@@ -50,16 +50,16 @@ function foldNote(value) {
 }
 
 /**
- * FONCTION RESET
+ * RESET FUNCTION
  */
 function reset() {
     stepIndex = 0;
-    post("Séquenceur réinitialisé au pas 1.\n");
+    post("Sequencer reset to step 1.\n");
 }
 
 /**
- * FONCTION PANIC
- * Envoie vélocité 0 aux 128 notes et réinitialise la mémoire.
+ * PANIC FUNCTION
+ * Sends velocity 0 to all 128 notes and resets memory.
  */
 function panic() {
     for (var i = 0; i <= 127; i++) {
@@ -68,11 +68,11 @@ function panic() {
     }
     noteMemory = {};
     stepIndex = 0;
-    post("SEQ-FWD PANIC");
+    post("SEQ-FWD PANIC\n");
 }
 
 /**
- * GESTION DES ENTIERS (Inlets 2 et 3)
+ * HANDLE INTEGERS (Inlets 2 and 3)
  */
 function msg_int(v) {
     if (inlet == 2) velMod = v;
@@ -83,43 +83,43 @@ function msg_int(v) {
 }
 
 /**
- * GESTION DES MESSAGES LISTES (Inlets 1 et 2)
+ * HANDLE LIST MESSAGES (Inlets 1 and 2)
  */
 function list() {
-    // Mise à jour de la séquence
+    // Update the sequence
     if (inlet == 1) {
         intervals = Array.prototype.slice.call(arguments);
         stepIndex = 0; 
     }
     
-    // Entrée MIDI Live
+    // MIDI Live Input
     if (inlet == 0) {
         if (arguments.length >= 2) {
             var inputPitch = arguments[0];
             var inputVel = arguments[1];
 
             if (inputVel > 0) {
-                // --- DÉTECTION AUTO-PANIC (C8 / 120 répétée) ---
+                // --- AUTO-PANIC DETECTION ---
                 if (inputPitch === PANIC_NOTE) {
                     var currentTime = Date.now();
                     if (currentTime - lastPanicNoteTime < 250) {
                         panic();
-                        return; // On stoppe l'exécution pour ne pas générer de note
+                        return; // Stop execution to prevent note generation
                     }
                     lastPanicNoteTime = currentTime;
                 }
 
-                // --- LOGIQUE NOTE ON SÉQUENCEUR ---
+                // --- SEQUENCER NOTE ON LOGIC ---
                 var currentShift = intervals[stepIndex];
                 var outputPitch = foldNote(inputPitch + currentShift);
                 
-                // Mémorisation du pitch de sortie pour le futur Note Off
+                // Store output pitch for future Note Off
                 noteMemory[inputPitch] = outputPitch;
                 
-                // Incrément cyclique de la séquence
+                // Cyclic sequence increment
                 stepIndex = (stepIndex + 1) % intervals.length;
 
-                // Sortie avec gestion des doublons
+                // Output handling with duplicate management
                 if (activeNoteCount[outputPitch] === 0) {
                     var v = Math.max(1, Math.min(inputVel + velMod, 127));
                     outlet(0, outputPitch, v);
@@ -127,12 +127,12 @@ function list() {
                 activeNoteCount[outputPitch]++;
 
             } else {
-                // --- LOGIQUE NOTE OFF ---
+                // --- NOTE OFF LOGIC ---
                 if (noteMemory[inputPitch] !== undefined) {
                     var outPitch = noteMemory[inputPitch];
                     activeNoteCount[outPitch]--;
 
-                    // On n'envoie le Note Off réel que si aucune autre instance n'est active
+                    // Only send real Note Off if no other instances are active
                     if (activeNoteCount[outPitch] <= 0) {
                         activeNoteCount[outPitch] = 0;
                         outlet(0, outPitch, 0);
